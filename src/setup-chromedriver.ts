@@ -1,11 +1,13 @@
 import * as core from "@actions/core";
 import * as exec from "@actions/exec";
 import * as path from "path";
+import * as os from "os";
 
 async function run() {
   try {
     console.log(`##setup chromedriver`);
     const version = core.getInput("chromedriver-version", { required: false });
+    const chromeapp = core.getInput("chromeapp", { required: false });
     const plat = process.platform;
     let arch = "linux";
     switch (plat) {
@@ -13,7 +15,12 @@ async function run() {
         arch = plat;
         break;
       case "darwin":
-        arch = "mac64";
+        // Check if running on ARM64 macOS (Apple Silicon)
+        if (os.arch() === "arm64") {
+          arch = "mac-arm64";
+        } else {
+          arch = "mac64";
+        }
         break;
       default:
       case "linux":
@@ -21,13 +28,15 @@ async function run() {
     }
     if (arch == "win32") {
       await exec.exec(
-        "powershell -File " +
-          path.join(__dirname, "../lib", "setup-chromedriver.ps1 " + version)
-      );
+        "powershell -File " + path.join(__dirname, "../lib", "setup-chromedriver.ps1 "), [
+        version,
+        chromeapp
+      ]);
     } else {
       await exec.exec(path.join(__dirname, "../lib", "setup-chromedriver.sh"), [
         version,
         arch,
+        chromeapp,
       ]);
     }
   } catch (error: unknown) {
