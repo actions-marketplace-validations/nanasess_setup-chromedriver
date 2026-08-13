@@ -37,10 +37,28 @@
 Add this step to your workflow to automatically set up ChromeDriver:
 
 ```yaml
-- uses: nanasess/setup-chromedriver@v2
+- uses: nanasess/setup-chromedriver@v3
 ```
 
 That's it! ChromeDriver will be installed and added to your PATH.
+
+> [!NOTE]
+> **Versioning** — `@v3` is the current major, a native TypeScript
+> reimplementation of the action. The public contract (inputs, install
+> locations, PATH behavior) is unchanged from `@v2`, so upgrading is a drop-in
+> replacement. `@v2` remains available as the previous, shell-based
+> implementation for existing workflows that prefer to stay pinned.
+
+> [!TIP]
+> **Supply-chain hardening** — mutable tags like v3 can be repointed at any
+> time, so for security-sensitive workflows pin the action to a full-length
+> commit SHA instead. Keep the tag in a trailing comment for readability, and
+> let Dependabot/Renovate bump the SHA for you:
+>
+> ```yaml
+> # Pinned to a full commit SHA (recommended)
+> - uses: nanasess/setup-chromedriver@<full-commit-sha> # v3.0.0
+> ```
 
 ## 📖 Usage
 
@@ -51,7 +69,7 @@ The simplest way to use this action is without any parameters. It will automatic
 ```yaml
 steps:
   - uses: actions/checkout@v4
-  - uses: nanasess/setup-chromedriver@v2
+  - uses: nanasess/setup-chromedriver@v3
   - run: chromedriver --version
 ```
 
@@ -62,7 +80,7 @@ If you need a specific version of ChromeDriver:
 ```yaml
 steps:
   - uses: actions/checkout@v4
-  - uses: nanasess/setup-chromedriver@v2
+  - uses: nanasess/setup-chromedriver@v3
     with:
       chromedriver-version: '131.0.6778.87'
   - run: chromedriver --version
@@ -75,9 +93,66 @@ If your Chrome binary has a custom name:
 ```yaml
 steps:
   - uses: actions/checkout@v4
-  - uses: nanasess/setup-chromedriver@v2
+  - uses: nanasess/setup-chromedriver@v3
     with:
       chromeapp: chrome-beta
+```
+
+### Usage in a Container
+
+When a job runs inside a `container:` image (e.g. `ruby`, `elixir`, `node:slim`,
+`debian:slim`), the action **cannot install Google Chrome or the system
+prerequisites for you** — minimal images ship without `sudo`, `git`, `gnupg`,
+`unzip`, etc., and recent Debian releases (12 "bookworm" and later) no longer
+provide `apt-key`. You must prepare the container yourself before calling the
+action (see issues [#32](https://github.com/nanasess/setup-chromedriver/issues/32)
+and [#243](https://github.com/nanasess/setup-chromedriver/issues/243)).
+
+Three things are required:
+
+1. **Install the prerequisites _before_ `actions/checkout`** (checkout itself
+   needs `git`, which slim images do not ship):
+   `git sudo gnupg ca-certificates curl unzip jq wget`
+2. **Install Google Chrome yourself** using the modern `signed-by` keyring
+   scheme (the action's built-in Chrome install relies on the removed
+   `apt-key`).
+3. **Pass `chromeapp: google-chrome-stable`** — the action checks
+   `dpkg -s <chromeapp>`, so it must match the installed _package_ name
+   (`google-chrome-stable`), not the `google-chrome` binary alias. Otherwise the
+   check fails and the action falls back to the broken `apt-key` install path.
+
+```yaml
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    container:
+      image: ruby:3.2.2
+    steps:
+      # 1. Prerequisites (must run before checkout, since checkout needs git)
+      - name: Install container prerequisites
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            git sudo gnupg ca-certificates curl unzip jq wget
+
+      # 2. Install Google Chrome via the signed-by keyring scheme
+      - name: Install Google Chrome
+        run: |
+          wget -q -O- https://dl.google.com/linux/linux_signing_key.pub \
+            | gpg --dearmor -o /usr/share/keyrings/google-chrome.gpg
+          echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome.gpg] http://dl.google.com/linux/chrome/deb/ stable main" \
+            > /etc/apt/sources.list.d/google-chrome.list
+          apt-get update
+          apt-get install -y google-chrome-stable
+
+      - uses: actions/checkout@v4
+
+      # 3. Pass the installed package name as chromeapp
+      - uses: nanasess/setup-chromedriver@v3
+        with:
+          chromeapp: google-chrome-stable
+
+      - run: chromedriver --version
 ```
 
 ## 🖥️ Platform Support
@@ -111,7 +186,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: nanasess/setup-chromedriver@v2
+      - uses: nanasess/setup-chromedriver@v3
 
       - name: Start ChromeDriver
         run: |
@@ -135,7 +210,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: nanasess/setup-chromedriver@v2
+      - uses: nanasess/setup-chromedriver@v3
 
       - name: Start ChromeDriver
         run: chromedriver --url-base=/wd/hub &
@@ -159,7 +234,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: nanasess/setup-chromedriver@v2
+      - uses: nanasess/setup-chromedriver@v3
 
       - name: Run tests
         run: npm test
@@ -182,7 +257,7 @@ jobs:
         with:
           chrome-version: '131'
 
-      - uses: nanasess/setup-chromedriver@v2
+      - uses: nanasess/setup-chromedriver@v3
         with:
           chromedriver-version: '131.0.6778.87'
 
@@ -197,7 +272,7 @@ Contributions are welcome! Here's how you can help:
 1. 🍴 Fork the repository
 2. 🔧 Create your feature branch (`git checkout -b feature/amazing-feature`)
 3. 💻 Make your changes
-4. ✅ Run tests with `yarn test`
+4. ✅ Run tests with `pnpm test`
 5. 📝 Commit your changes (`git commit -m 'Add amazing feature'`)
 6. 📤 Push to the branch (`git push origin feature/amazing-feature`)
 7. 🔄 Open a Pull Request
@@ -205,18 +280,21 @@ Contributions are welcome! Here's how you can help:
 ### Development Setup
 
 ```bash
+# Enable pnpm via Corepack (uses the version pinned in package.json)
+corepack enable
+
 # Install dependencies
-yarn install --frozen-lockfile
+pnpm install --frozen-lockfile
 
 # Build the action
-yarn build
-yarn package
+pnpm build
+pnpm package
 
 # Run tests
-yarn test
+pnpm test
 
 # Format code
-yarn format
+pnpm format
 ```
 
 For more details on the architecture and development process, see [CLAUDE.md](./CLAUDE.md).
